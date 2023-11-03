@@ -127,8 +127,14 @@ struct BearingSimulation{M <: BearingMethod, BC1 <: BoundaryCondition, BC2 <: Bo
     tol::T
     basis_order::Int
     boundarybasis::BB
+    method::M
 
-    function BearingSimulation(ω::T, bearing::RollerBearing{T}, boundarydata1::BoundaryData{BC1,T}, boundarydata2::BoundaryData{BC2,T}; tol::T = eps(T)^(1/2), basis_order::Int = -1, boundarybasis::BB = BoundaryBasis(boundarydata1.boundarytype)) where {BC1 <: BoundaryCondition, BC2 <: BoundaryCondition, BB <:BoundaryBasis, T}
+    function BearingSimulation(ω::T, bearing::RollerBearing{T}, boundarydata1::BoundaryData{BC1,T}, boundarydata2::BoundaryData{BC2,T}; 
+            tol::T = eps(T)^(1/2), 
+            basis_order::Int = -1, 
+            boundarybasis::BB = BoundaryBasis(boundarydata1.boundarytype), 
+            method::M = ModalMethod() 
+        ) where {M <: BearingMethod, BC1 <: BoundaryCondition, BC2 <: BoundaryCondition, BB <:BoundaryBasis, T}
 
         if size(boundarydata1.fourier_modes,1) != size(boundarydata2.fourier_modes,1)
             @error "number of fourier_modes in boundarydata1 and boundarydata2 needs to be the same"
@@ -175,11 +181,20 @@ struct BearingSimulation{M <: BearingMethod, BC1 <: BoundaryCondition, BC2 <: Bo
                 θs = boundarydata2.θs
             )
         end
+        
+        
+        if !isempty(bearing.inner_gaps) || !isempty(bearing.outer_gaps)
+           method = GapMethod()
+        end
 
+        if !isempty(boundarybasis.basis)
+           method = PriorMethod()
+        end
+        #end
         # if there is no prior information given then m = ModalMethod()
         # if there is a gap then m = GapMethod()
         # else m = ModalMethod()
-        M = ModalMethod
+        #M = ModalMethod
         
         # replace the below with
         # new{BC1,BC2,T}(ω, basis_order, bearing, boundarydata1, boundarydata2, m, tol)
@@ -196,8 +211,6 @@ struct BearingSimulation{M <: BearingMethod, BC1 <: BoundaryCondition, BC2 <: Bo
                     )
             end
         end
-        
-        new{M,BC1,BC2,BB,T}(ω, bearing, boundarydata1, boundarydata2, tol, basis_order, boundarybasis)
-
+        new{typeof(method),BC1,BC2,BB,T}(ω, bearing, boundarydata1, boundarydata2, tol, basis_order, boundarybasis, method)
     end
 end
