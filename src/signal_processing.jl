@@ -1,4 +1,30 @@
+function fields_to_fouriermodes(boundarydata::BoundaryData, basis_order::Int = round(floor(length(boundarydata.θs)/2 - 1/2)) |> Int)
+    
+    modes = fields_to_fouriermodes(boundarydata.θs, boundarydata.fields, basis_order)
+    
+    return BoundaryData(boundarydata.boundarytype;
+        fourier_modes = modes,
+        fields = boundarydata.fields,
+        θs = boundarydata.θs
+    )
+end
+
+function fouriermodes_to_fields(boundarydata::BoundaryData)
+    fields = fouriermodes_to_fields(boundarydata.θs, boundarydata.fourier_modes)
+
+    return BoundaryData(boundarydata.boundarytype;
+        fourier_modes = boundarydata.fourier_modes,
+        fields = fields,
+        θs = boundarydata.θs
+    )
+end
+
+
 function fields_to_fouriermodes(θs::AbstractVector, fields::AbstractArray, basis_order::Int)
+
+    if 2basis_order + 1 > length(θs)
+        error("Can not calculate up to basis_order = $basis_order of the fourier modes from only $(length(θs)) field points. Either descrease basis_order or increase the number of points in fields")
+    end
 
     exps = [
         exp(im * θ * m)
@@ -9,7 +35,7 @@ end
 
 function fouriermodes_to_fields(θs::AbstractVector, fouriermodes::AbstractArray)
 
-    basis_order = basislength_to_basisorder(Acoustic{Float64,2}, size(fouriermodes,1))
+    basis_order = basislength_to_basisorder(PhysicalMedium{2,1}, size(fouriermodes,1))
 
     exps = [
         exp(im * θ * m)

@@ -1,7 +1,7 @@
 ## Simulation in time
 
-steel = Elasticity(2; ρ = 7.0, cp = 5.0 - 1.1im, cs = 3.5 - 0.6im)
-steel = Elasticity(2; ρ = 7.0, cp = 5.0 - 0.05im, cs = 3.5 - 0.1im)
+steel = Elastic(2; ρ = 7.0, cp = 5.0 - 1.1im, cs = 3.5 - 0.6im)
+steel = Elastic(2; ρ = 7.0, cp = 5.0 - 0.05im, cs = 3.5 - 0.1im)
 bearing = RollerBearing(medium = steel, inner_radius = 1.0, outer_radius = 2.0)
 
 # time for wave to go from inner boundary to outer boundary
@@ -50,7 +50,7 @@ i = 100
 sim = BearingSimulation(ωs[i], bearing, bd1, bd2; basis_order = basis_order, tol = 1e-9)
 
 wave = ElasticWave(sim)
-res = field(wave.shear, bearing; res = 120)
+res = field(wave.potentials[2], bearing; res = 120)
 
 plot(res,ωs[i]; seriestype=:heatmap)
 plot!(Circle(bearing.inner_radius))
@@ -86,7 +86,7 @@ results = map(eachindex(ωs)) do i
     # scale the potential to match the units of stress
     scale = steel.ρ * ωs[i]^2
 
-    potential = HelmholtzPotential{2}(wave.shear.wavespeed, wave.shear.wavenumber, scale .* wave.shear.coefficients)
+    potential = HelmholtzPotential{2}(wave.potentials[2].wavespeed, wave.potentials[2].wavenumber, scale .* wave.potentials[2].coefficients)
 
     res = field(potential, bearing; res = 120)
     # plot(res, ωs[i]; seriestype=:contour)
