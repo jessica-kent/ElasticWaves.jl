@@ -1,5 +1,4 @@
 using ElasticWaves
-
 using Test, Statistics, LinearAlgebra, MultipleScattering
 
 # need a test to check that the equations for displacement and traction were written correctly. One possible test is to check one version of the integral form of the principal of virtual work. For example, we could check that
@@ -21,7 +20,10 @@ include("source_scattering_test.jl")
 
     # tests that the boundary conditions are formed correctly, and uniqueness
     include("inverse_problems_test.jl")
-
-    # include("boundary_basis.jl")
+    
+    # tests for the PriorMethod that uses a basis for the solution
     include("boundary_basis_example.jl")
     include("boundary_basis_test.jl")
+    
+    # tests for the loading profile
+    include("loading_profile_tests.jl")

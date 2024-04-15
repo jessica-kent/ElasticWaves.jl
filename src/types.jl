@@ -23,9 +23,26 @@ struct ModalMethod <: SolutionMethod
     # to use Tikhonov regularization give a non-zero parameter
     regularisation_parameter::Float64
     only_stable_modes::Bool
-    basis_order::Int
+    modes::Vector{Int}
     mode_errors::Vector{Float64}
+
+    function ModalMethod(tol::Float64, regularisation_parameter::Float64, only_stable_modes::Bool, modes::Vector{Int}, mode_errors::Vector{Float64})
+
+        is = sortperm_modes(modes);
+        modes = modes[is]
+
+        if !isempty(mode_errors)
+            if length(mode_errors) != length(modes)
+                @warn("both mode_errors and modes where given but have different lengths.")
+
+            else mode_errors = mode_errors[is]
+            end
+        end
+
+        new(tol, regularisation_parameter, only_stable_modes, modes, mode_errors)
+    end    
 end
+
 struct GapMethod <: BearingMethod end
 
 struct PriorMethod <: SolutionMethod
@@ -39,24 +56,24 @@ end
 
 function ModalMethod(; 
         tol::Float64 = eps(Float64)^(1/2), 
-        regularisation_parameter::Float64 = zero(Float64),
-        only_stable_modes = true,
-        basis_order = -1,
-        mode_errors = Float64[]
+        regularisation_parameter::Float64 = eps(typeof(tol)) / tol,
+        only_stable_modes::Bool = true,
+        modes::Vector{Int} = Int[],
+        mode_errors::Vector = Float64[]
     )
 
     if !only_stable_modes 
         @warn "only_stable_modes was set to false. This means that potentially ill-posed (or unstable) modes will attempt to be solved, which could lead to non-sense solutions." 
     end
 
-    ModalMethod(tol, regularisation_parameter, only_stable_modes, basis_order, mode_errors)
+    ModalMethod(tol, regularisation_parameter, only_stable_modes, modes, mode_errors)
 end
 
 function PriorMethod(; 
         tol::Float64 = eps(Float64)^(1/2), 
         regularisation_parameter::Float64 = zero(Float64),
-        basis_order::Int = -1,
-        modal_method = ModalMethod(tol = tol, basis_order = basis_order),
+        modes::Vector{Int} = Int[],
+        modal_method = ModalMethod(tol = tol, modes = modes),
         condition_number = -one(Float64),
         boundary_error = -one(Float64),
 

@@ -13,8 +13,11 @@ export plane_z_shear_source
 
 # bearing.jl
 export RollerBearing, BoundaryCondition, DisplacementBoundary, TractionBoundary
-export BoundaryData, BoundaryBasis, BearingSimulation, setup, nondimensionalise, nondimensionalise!
+export BoundaryData, select_modes, BoundaryBasis, BearingSimulation, setup, nondimensionalise, nondimensionalise!
 export isempty, boundary_data
+export point_contact_boundary_data, natural_frequencies
+
+# loading-profile.jl
 
 # fields.jl
 export field
@@ -30,13 +33,13 @@ export modal_system, t_matrix, internal_matrix
 export field_modes, displacement, traction, pressure_field_mode, shear_field_mode
 
 # signal_processing.jl
-export fouriermodes_to_fields, fields_to_fouriermodes
+export fouriermodes_to_fields, fields_to_fouriermodes, sortperm_modes, is_standard_order, normalize!
 
 # cylindrical/utils.jl
 export estimate_basisorder # soon to be removed
 
 # cylindrical/elastic_wave.jl
-export boundarycondition_mode, boundarycondition_system, modal_coefficients! 
+export boundarycondition_mode, boundarycondition_system, modes_coefficients! 
 
 using MultipleScattering
 using SpecialFunctions
@@ -45,11 +48,16 @@ using LinearAlgebra
 using StaticArrays: SVector
 using BlockArrays, BlockDiagonals
 
+
+# for ploting recipes
+using RecipesBase
+
 include("types.jl")
 include("elasticity.jl")
 include("source.jl")
 
 include("bearing.jl")
+include("loading-profile.jl")
 include("fields.jl")
 include("signal_processing.jl")
 
@@ -59,5 +67,7 @@ include("spherical/t-matrix.jl")
 include("cylindrical/utils.jl")
 include("cylindrical/elastic_wave.jl")
 include("cylindrical/fields.jl")
+
+include("plot.jl")
 
 end # module

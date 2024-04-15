@@ -16,8 +16,12 @@
     λ2μ = steel.cp^2 * steel.ρ
 
 ## Forward problem with forcing on inner boundary to create a basis
-    basis_order = 30;    
-    θs = LinRange(0.0, 2pi, 2basis_order+2)[1:end-1]
+    basis_order = 30;
+
+    # modes determines which Fourier modes to consider. Could be any choice of integers
+    modes = -basis_order:basis_order    
+
+    θs = LinRange(0.0, 2pi, length(modes)+1)[1:end-1]
     # using 2basis_order + 2 guarantees that we can exactly represent the above with Fourier modes with basis_order number of modes
 
     # choose a basis for the pressure and shear on the inner boundary
@@ -47,7 +51,7 @@
         bc2_forward = TractionBoundary(outer=true)
 
         bd1_for = BoundaryData(bc1_forward, θs=θs, fields = hcat(fp1,fs1))
-        bd1_for = fields_to_fouriermodes(bd1_for)
+        bd1_for = fields_to_fouriermodes(bd1_for, modes)
     
         # a quick test that the fields and Fourier modes are exactly invertable for convenience 
         bd_test = fouriermodes_to_fields(bd1_for)
@@ -78,7 +82,7 @@
     
     # as there are two basis functions, we will need to at least two measurements. Typically each sensor, or point on the boundary, gives two measurements. So one sensor can be enough. 
         numberofsensors = Int(ceil(length(θos)/2))
-        
+
         θs_inv = LinRange(0, 2pi, numberofsensors + 1)[1:end-1]
 
         # create the data from evaluating the forward problem 
@@ -91,9 +95,9 @@
     # Create a boundary basis for the inverse problem for the inner boundary
         bd1s = [
             BoundaryData(bc1_forward, θs = θs, fields = hcat(fp1s[j],fs1s[j]))
-        for j in eachindex(fp1s)]
+        for j in eachindex(fp1s)];
 
-        boundarybasis1 = BoundaryBasis(bd1s)
+        boundarybasis1 = BoundaryBasis(bd1s);
 
     # solve the inverse problem with the PriorMethod
     method = PriorMethod(tol = modal_method.tol, modal_method = modal_method)
@@ -107,7 +111,7 @@
 
 ## Test how well we recover the inner traction
     # using a convenience function
-    bd1_inner, bd2_outer = boundary_data(forward_sim, inverse_wave)
+    bd1_inner, bd2_outer = boundary_data(forward_sim, inverse_wave);
 
     # even excluding some modes the recovery is very good with just one sensor
     # this is because the higher order modes (in this case) contribute very little to the field

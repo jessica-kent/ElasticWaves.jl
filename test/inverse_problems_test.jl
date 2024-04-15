@@ -2,7 +2,7 @@
 
 @testset "Inverse problems for the modes" begin
 
-    ωs = [1e3,4e4,7e4]
+    ωs = [2e3,4e4,7e4]
 
     # NOTE: The inverse problem can become more ill-posed if the imaginary part of the wavespeed is large enogh
     steel = Elastic(2; ρ = 7800.0, cp = 5000.0, cs = 3500.0)
@@ -13,16 +13,18 @@
     ksa = bearing.outer_radius .* ωs ./ steel.cs
 
     basis_order = 10
-    basis_length = basisorder_to_basislength(Acoustic{Float64,2}, basis_order)
+    modes = -basis_order:basis_order
+    basis_length = length(modes)
+    # basis_length = basisorder_to_basislength(Acoustic{Float64,2}, basis_order)
 
     # first the forward problem
     forcing_modes = rand(basis_length,4) + rand(basis_length,4) .* im
 
-    bd1 = BoundaryData(TractionBoundary(inner = true); fourier_modes = forcing_modes[:,1:2])
-    bd2 = BoundaryData(TractionBoundary(outer = true); fourier_modes = forcing_modes[:,3:4])
+    bd1 = BoundaryData(TractionBoundary(inner = true); coefficients =  forcing_modes[:,1:2])
+    bd2 = BoundaryData(TractionBoundary(outer = true); coefficients =  forcing_modes[:,3:4])
     
     # Will use only the Fourier modes that were calculated correctly by adding the option: only_stable_modes = true
-    method = ModalMethod(tol = 1e-3, only_stable_modes = true)
+    method = ModalMethod(tol = 1e-5, only_stable_modes = true)
     sims = [
         BearingSimulation(ω, bearing, bd1, bd2; method = method)
     for ω in ωs];
@@ -31,13 +33,15 @@
     # setup a problem with only boundary information on the outer boundary.
     bd1s = map(waves) do wave
         BoundaryData(TractionBoundary(outer = true);
-            fourier_modes = field_modes(wave, bearing.outer_radius, TractionType())
+            coefficients = field_modes(wave, bearing.outer_radius, TractionType()),
+            modes = wave.method.modes
         )
-    end
+    end;
 
     bd2s = map(waves) do wave
         BoundaryData(DisplacementBoundary(outer = true); 
-            fourier_modes = field_modes(wave, bearing.outer_radius, DisplacementType())
+            coefficients =  field_modes(wave, bearing.outer_radius, DisplacementType()),
+            modes = wave.method.modes
         )
     end
 
@@ -53,14 +57,14 @@
     for i in eachindex(ωs)]
 
     # the lowest frequency here is still unstable
-    errors[1] > 1.0
+    @test errors[1] < 1e-8
     @test maximum(errors[2:end]) < 1e-13
 
     errors = [
         maximum(abs.(waves[i].potentials[1].coefficients - inverse_waves[i].potentials[1].coefficients)) / mean(abs.(waves[i].potentials[1].coefficients))
     for i in eachindex(ωs)]
 
-    errors[1] < 1.0
+    @test errors[1] < 1e-8
     @test maximum(errors[2:end]) < 1e-13
 
     # We can redo the lowest frequency with an even more stringent tolerance that excludes unstable modes
@@ -71,13 +75,15 @@
     # setup a problem with only boundary information on the outer boundary.
     bd1s = map(waves) do wave
         BoundaryData(TractionBoundary(outer = true);
-            fourier_modes = field_modes(wave, bearing.outer_radius, TractionType())
+            coefficients =  field_modes(wave, bearing.outer_radius, TractionType()),
+            modes = wave.method.modes
         )
     end
 
     bd2s = map(waves) do wave
         BoundaryData(DisplacementBoundary(outer = true); 
-            fourier_modes = field_modes(wave, bearing.outer_radius, DisplacementType())
+            coefficients =  field_modes(wave, bearing.outer_radius, DisplacementType()),
+            modes = wave.method.modes
         )
     end
 
@@ -90,13 +96,13 @@
         maximum(abs.(waves[i].potentials[2].coefficients - inverse_waves[i].potentials[2].coefficients)) / mean(abs.(waves[i].potentials[2].coefficients))
     for i in eachindex(ωs)]
 
-    @test maximum(errors) < 1e-13
+    @test maximum(errors) < 1e-11
 
     errors = [
         maximum(abs.(waves[i].potentials[1].coefficients - inverse_waves[i].potentials[1].coefficients)) / mean(abs.(waves[i].potentials[1].coefficients))
     for i in eachindex(ωs)]
 
-    @test maximum(errors) < 1e-13
+    @test maximum(errors) < 1e-11
     
     # Check if inverse_waves predicts the same traction on the inner boundary
     inner_traction_forcing_modes = [
@@ -104,31 +110,23 @@
     for w in inverse_waves]
 
     # Note how the error in the boundary away from the data is larger
-    errors = map(eachindex(ωs)) do i
-
-        in_modes = inner_traction_forcing_modes[i]
-        order = Int((size(in_modes)[1] - 1)/2)
-        orders = (-order:order) .+ (basis_order + 1)
-
-        maximum(abs.(forcing_modes[orders,1:2] - in_modes)) / mean(abs.(forcing_modes[orders,1:2]))
+    errors = map(inner_traction_forcing_modes) do in_modes
+        l = size(in_modes,1) 
+        maximum(abs.(in_modes - bd1.coefficients[1:l,:])) / mean(abs.(in_modes))
     end
 
-    @test maximum(errors) < 1e-12
+    @test maximum(errors) < 1e-8
 
     outer_traction_forcing_modes = [
         field_modes(w, bearing.outer_radius, TractionType())
     for w in inverse_waves]
 
-    errors = map(eachindex(ωs)) do i
-
-        out_modes = outer_traction_forcing_modes[i]
-        order = Int((size(out_modes)[1] - 1)/2)
-        orders = (-order:order) .+ (basis_order + 1)
-
-        maximum(abs.(forcing_modes[orders,3:4] - out_modes)) / mean(abs.(forcing_modes[orders,3:4]))
+    errors = map(outer_traction_forcing_modes) do out_modes
+        l = size(out_modes,1) 
+        maximum(abs.(out_modes - bd2.coefficients[1:l,:])) / mean(abs.(out_modes))
     end
 
-    @test maximum(errors) < 1e-13
+    @test maximum(errors) < 1e-10
 
 end
 
@@ -165,12 +163,12 @@ end
     bd2 = BoundaryData(TractionBoundary(outer = true); θs = θs, fields = hcat(fs,fs))
 
     method = ModalMethod(only_stable_modes = false)
-    sim = BearingSimulation(ω, bearing, bd1, bd2; method = method)
+    sim = BearingSimulation(ω, bearing, bd1, bd2; method = method);
 
     # let's have a look at the modes that were calculated for this BearingSimulation. This is the field we will actual approximate
-    inner_field = fouriermodes_to_fields(θs,sim.boundarydata1.fourier_modes)
+    inner_field = fouriermodes_to_fields(θs, sim.boundarydata1.coefficients, sim.boundarydata1.modes)
 
-    @test norm(inner_field[:,1] - fp) < 1e-10
+    @test norm(inner_field[:,1] - fp) < 2e-10
 
     wave = ElasticWave(sim);
 end

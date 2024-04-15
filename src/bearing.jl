@@ -7,6 +7,10 @@ struct RollerBearing{T <: AbstractFloat}
     "vector of angles delimiting gaps in the outer radius"
     outer_gaps::Vector{T}
     number_of_rollers::Int
+    rollers_inside::Bool
+    roller_radius::Float64
+    roller_separation::Float64
+    angular_speed::Float64
 end
 
 function RollerBearing(; medium::Elastic{2,T},
@@ -14,15 +18,30 @@ function RollerBearing(; medium::Elastic{2,T},
         outer_radius::Union{T,Complex{T}} = 0.0,
         inner_gaps::Vector{T} = typeof(medium).parameters[2][],
         outer_gaps::Vector{T} = typeof(medium).parameters[2][],
-        number_of_rollers::Int = 1
+        roller_radius::T = inner_radius / typeof(inner_radius)(4.0),
+        number_of_rollers::Int = 8,
+        rollers_inside::Bool = true,
+        roller_separation::T = 2pi * (rollers_inside ? (inner_radius - roller_radius) : (outer_radius + roller_radius)) / number_of_rollers - 2 * roller_radius, 
+        angular_speed::T = 1.0
     ) where T <: AbstractFloat
+
     if isodd(length(inner_gaps)) && isodd(length(outer_gaps))
         @error "both inner_gaps and outer_gaps need to be an even number of angles"
     end
 
     println("Note that the traction on the inner boundary (τn,τt) is interpreted to be the vector τ = - τn * er - τt * eθ.")
 
-    RollerBearing{T}(medium, inner_radius, inner_gaps, outer_radius, outer_gaps, number_of_rollers)
+    # we assume the rollers are in contact with the raceway, but have a neglible indentation into the raceway. In which case we should have that 
+    
+    # the radius of the circle passing through the centre of the rollers
+    R =  rollers_inside ? (inner_radius - roller_radius) : (outer_radius + roller_radius)
+    d = 2 * roller_radius
+
+    if number_of_rollers >0 && !(2pi * R ≈ number_of_rollers * (d + roller_separation))
+        error(" the number of rollers, and separation distance, do not match the geometry of the raceway.")
+    end    
+
+    RollerBearing{T}(medium, inner_radius, inner_gaps, outer_radius, outer_gaps, number_of_rollers,rollers_inside, roller_radius, roller_separation, angular_speed)
 end
 
 
@@ -54,67 +73,172 @@ function TractionBoundary(; inner::Bool = false, outer::Bool = false)
     return BoundaryCondition{TractionType}(TractionType(),inner,outer)
 end
 
+abstract type AbstractBoundaryData{BC <: BoundaryCondition} end   
+
 """
     BoundaryData{BC <: BoundaryCondition, T}
 
-Gives all the information on one boundery of a `RollerBearing`. You can specify the forcing either be giving the `fourier_modes`, or by specifying the `fields`. The `fields` represent either the displacement or traction when varying the polar angle `θs`.
+Gives all the information on one boundery of a `RollerBearing`. You can specify the forcing either be giving the `coefficients`, or by specifying the `fields`. The `fields` represent either the displacement or traction when varying the polar angle `θs`.
 
-The relationship between the `fields` and the `fourier_modes` is given by ``f_{j}(\\theta) = \\sum_m \\text{mode}_{mj} e^{i \\theta m}``, where ``f`` represents the `fields`. To calculate the `fields` from the `fourier_modes` we can use:
+The relationship between the `fields` and the `coefficients` is given by ``f_{j}(\\theta) = \\sum_m \\text{mode}_{mj} e^{i \\theta m}``, where ``f`` represents the `fields`. To calculate the `fields` from the `coefficients` we can use:
 ```julia
-basis_order = (size(fourier_modes,1) - 1) / 2
 exps = [
     exp(im * θ * m)
-for θ in θs, m = -basis_order:basis_order];
+for θ in θs, m = modes];
 
-fields = exps * fourier_modes
+fields = exps * coefficients
 ```
 
-If the `fourier_modes` were specified, then they will be used directly. If the `fourier_modes` were not give, then `fields` will be used to calculate the `fourier_modes`: `fourier_modes = exps \\ fields`.
+If the `coefficients` were specified, then they will be used directly. If the `coefficients` were not given, then `fields` will be used to calculate the `coefficients`: `coefficients = exps \\ fields`.
 """
-struct BoundaryData{BC <: BoundaryCondition, T}
+struct BoundaryData{BC <: BoundaryCondition, T} <: AbstractBoundaryData{BC}
     boundarytype::BC
     θs::Vector{T}
     fields::Matrix{Complex{T}}
-    fourier_modes::Matrix{Complex{T}}
+    coefficients::Matrix{Complex{T}}
+    modes::Vector{Int}
+
+    function BoundaryData(boundarytype::BC, θs::AbstractVector{T}, fields::Matrix{Complex{T}}, coefficients::Matrix{Complex{T}}, modes::AbstractVector{Int}) where {BC <: BoundaryCondition, T}
+
+        if !isempty(coefficients)
+            if size(coefficients,2) != 2
+                @error "the coefficients should have only two columns" 
+            end
+    
+            is = sortperm_modes(modes);
+            if modes != modes[is]
+                @warn "A non standard order for the modes has been given. The standard order is assumed to be true by many functions"
+            end    
+        end    
+    
+        if !isempty(fields) 
+            if size(fields,2) != 2
+                @error "the fields should have only two columns"
+            end
+        end
+
+        return new{BC, T}(boundarytype, θs |> collect, fields, coefficients, modes |> collect)
+    end
+
 end
 
 
 function BoundaryData(boundarytype::BC;
         θs::AbstractVector{T} = Float64[],
         fields::Matrix = reshape(Complex{Float64}[],0,2),
-        fourier_modes::Matrix = reshape(Complex{Float64}[],0,2)
+        coefficients::Matrix = reshape(Complex{Float64}[],0,2),
+        modes::AbstractVector{Int} = Int[]
     ) where {BC <: BoundaryCondition, T}
 
-    if !isempty(fourier_modes) && size(fourier_modes,2) != 2
-        @error "the fourier_modes should have only two columns"
+    if !isempty(coefficients)
+        if size(coefficients,2) != 2
+            @error "the coefficients should have only two columns" 
+        end
+
+        if isempty(modes)
+            order = basislength_to_basisorder(PhysicalMedium{2,1},size(coefficients,1))
+            modes = -order:order
+
+        elseif size(coefficients,1) != length(modes)
+            @error "the Fourier coefficients should have the same length as modes"
+        end
+
+        is = sortperm_modes(modes);
+        modes = modes[is];
+        coefficients = coefficients[is,:]; 
+    end   
+
+    if !isempty(fields)
+        
+        if size(fields,2) != 2
+            @error "the fields should have only two columns"
+        end
+        if size(fields,1) != length(θs)
+            @error "the fields should have the same length as θs"
+        end
+
+        is = sortperm(θs);
+        θs = θs[is];
+        fields = fields[is,:];
     end
 
-    if !isempty(fields) && size(fields,2) != 2
-        @error "the fields should have only two columns"
-    end
-
-    return BoundaryData{BC,T}(boundarytype,θs,fields,fourier_modes)
+    return BoundaryData(boundarytype,θs |> collect, fields, coefficients, modes |> collect)
 end
 
-struct BoundaryBasis{BC <: BoundaryCondition, T}
-    basis::Vector{BoundaryData{BC,T}}
+# is_standard_order(bd::BoundaryData) = is_standard_order(bd.modes)
 
-    function BoundaryBasis(basis::Vector{BoundaryData{BC,T}}) where {BC <: BoundaryCondition, T}
-        field_lengths = [size(b.fields, 1) for b in basis]
-        fourier_mode_lengths = [size(b.fourier_modes, 1) for b in basis]
+function select_modes(bd::BoundaryData, modes::AbstractVector{Int})
+    
+    if !(setdiff(modes,bd.modes) |> isempty)
+        error("There are not enough modes in the boundarydata given to select the modes = $modes")
+    end
+    
+    inds = [findfirst(m .== bd.modes) for m in modes]
+    @reset bd.modes = modes
+    @reset bd.coefficients = bd.coefficients[inds,:]
 
-        allsame(x) = all(y -> y == first(x), x)
+    return bd
+end
 
-        if !allsame(fourier_mode_lengths) || !allsame(field_lengths)
-            error("The length of the fields and fourier_modes of each BoundaryData in a BoundaryBasis need to be equal")
+"""
+    BoundaryData(wave::ElasticWave{2}, radius, θs, fieldtype)
+
+A convenience function to predict the boundary data of 'sim' according to the solution 'wave'.    
+"""
+function BoundaryData(boundarycondition::BoundaryCondition, radius::AbstractFloat, θs::AbstractVector{T}, wave::ElasticWave{2}) where T <: AbstractFloat
+    
+    xs = [
+        radial_to_cartesian_coordinates([radius,θ]) 
+    for θ in θs];
+    
+    fs = [field(wave, x, boundarycondition.fieldtype) for x in xs];
+    fs = hcat(fs...) |> transpose |> collect
+
+    return BoundaryData(boundarycondition; θs = θs, fields = Matrix{Complex{T}}(fs))
+end
+
+struct BoundaryBasis{BD <: AbstractBoundaryData}
+    basis::Vector{BD}
+
+    function BoundaryBasis(basis::Vector{BD}) where {BD <: AbstractBoundaryData}
+
+        T = basis[1].coefficients |> typeof
+        Tc = T.parameters[1]
+        
+        T = basis[1].fields |> typeof
+        Tf = T.parameters[1]
+    
+        # find all the angles and modes represented. 
+        θs = union([b.θs for b in basis]...)
+        modes = union([b.modes for b in basis]...)
+    
+        # Pad each element of the basis to cover the same angles and modes
+        basis_padded = map(basis) do b
+            add_modes = setdiff(modes, b.modes)
+            b_modes = [add_modes; b.modes]
+            b_coes = [zeros(Tc, add_modes |> length , 2); b.coefficients]
+    
+            inds = sortperm_modes(b_modes)
+            @reset b.modes = b_modes[inds]
+            @reset b.coefficients = b_coes[inds,:]
+    
+            add_θs = setdiff(θs, b.θs)
+            b_θs = [add_θs; b.θs]
+            b_fields = [zeros(Tf, add_θs |> length , 2); b.fields]
+    
+            inds = sortperm(b_θs)
+            @reset b.θs = b_θs[inds]
+            @reset b.fields = b_fields[inds,:]
+    
+            b
         end    
-
-    return new{BC,T}(basis)
-    end    
+    
+        return new{BD}(basis_padded)
+    end
 end
 
 import Base: isempty
-isempty(bd::BoundaryData) = all([isempty(bd.fields),isempty(bd.fourier_modes)])  
+isempty(bd::BoundaryData) = all([isempty(bd.fields),isempty(bd.coefficients)])  
 isempty(bb::BoundaryBasis) = all([isempty(bd) for bd in bb.basis])  
     
 # """
@@ -131,29 +255,29 @@ isempty(bb::BoundaryBasis) = all([isempty(bd) for bd in bb.basis])
 # """
 # EmptyBoundaryBasis(bd::BoundaryData) =  BoundaryBasis(bd[])
 
-mutable struct BearingSimulation{M <: SolutionMethod, BC1 <: BoundaryCondition, BC2 <: BoundaryCondition, BCB1 <: BoundaryCondition, BCB2 <: BoundaryCondition, T}
+mutable struct BearingSimulation{M <: SolutionMethod, BC1 <: BoundaryCondition, BC2 <: BoundaryCondition, BD1 <: BoundaryData, BD2 <: BoundaryData, T}
     ω::T
     method::M
     nondimensionalise::Bool 
     bearing::RollerBearing{T}
     boundarydata1::BoundaryData{BC1,T}
     boundarydata2::BoundaryData{BC2,T}
-    boundarybasis1::BoundaryBasis{BCB1,T}
-    boundarybasis2::BoundaryBasis{BCB2,T}  
+    boundarybasis1::BoundaryBasis{BD1}
+    boundarybasis2::BoundaryBasis{BD2}
 end
 
-function BearingSimulation(ω::T, method::M, bearing::RollerBearing{T}, 
+function BearingSimulation(ω::Real, method::M, bearing::RollerBearing{T}, 
         boundarydata1::BoundaryData{BC1,T},
         boundarydata2::BoundaryData{BC2,T};
-        nondimensionalise::Bool = false,
-        boundarybasis1::BoundaryBasis{BCB1,T}  = BoundaryBasis([BoundaryData(boundarydata1.boundarytype)]),
-        boundarybasis2::BoundaryBasis{BCB2,T}  = BoundaryBasis([BoundaryData(boundarydata2.boundarytype)])
-    ) where {T, M <: SolutionMethod, BC1 <: BoundaryCondition, BC2 <: BoundaryCondition, BCB1 <: BoundaryCondition, BCB2 <: BoundaryCondition}
+        nondimensionalise::Bool = true,
+        boundarybasis1::BoundaryBasis{BD1}  = BoundaryBasis([BoundaryData(boundarydata1.boundarytype)]),
+        boundarybasis2::BoundaryBasis{BD2}  = BoundaryBasis([BoundaryData(boundarydata2.boundarytype)])
+    ) where {T, M <: SolutionMethod, BC1 <: BoundaryCondition, BC2 <: BoundaryCondition, BD1 <: BoundaryData, BD2 <: BoundaryData,}
 
-    sim = BearingSimulation{M,BC1,BC2,BCB1,BCB2,T}(ω, method, nondimensionalise, bearing, boundarydata1, boundarydata2, boundarybasis1, boundarybasis2)
+    sim = BearingSimulation{M,BC1,BC2,BD1,BD2,T}(T(ω), method, nondimensionalise, bearing, boundarydata1, boundarydata2, boundarybasis1, boundarybasis2)
 
     return setup(sim)
-end 
+end
 
 import MultipleScattering: boundary_data
 """
@@ -163,6 +287,9 @@ A convenience function to predict the boundary data of 'sim' according to the so
 """
 function boundary_data(sim::BearingSimulation, wave::ElasticWave{2})
 
+    if wave.potentials[1].modes |> isempty 
+        @error "The wave potentials are empty. Can not calculate field."
+    end     
     bd1 = sim.boundarydata1;
     bd2 = sim.boundarydata2;
 
@@ -177,28 +304,11 @@ function boundary_data(sim::BearingSimulation, wave::ElasticWave{2})
     return [bd1, bd2]
 end
 
-"""
-    BoundaryData(wave::ElasticWave{2}, radius, θs, fieldtype)
-
-A convenience function to predict the boundary data of 'sim' according to the solution 'wave'.    
-"""
-function BoundaryData(boundarycondition::BoundaryCondition, radius::AbstractFloat, θs::AbstractVector{T}, wave::ElasticWave{2}) where T <: AbstractFloat
-
-    xs = [
-        radial_to_cartesian_coordinates([radius,θ]) 
-    for θ in θs];
-    
-    fs = [field(wave, x, boundarycondition.fieldtype) for x in xs];
-    fs = hcat(fs...) |> transpose |> collect
-
-    return BoundaryData(boundarycondition; θs = θs, fields = fs)
-end
-
 function nondimensionalise!(boundarydata::BoundaryData{BoundaryCondition{TractionType}}, sim::BearingSimulation)
 
     λ2μ = sim.bearing.medium.ρ * sim.bearing.medium.cp^2
     boundarydata.fields[:] = boundarydata.fields ./ λ2μ
-    boundarydata.fourier_modes[:] = boundarydata.fourier_modes ./ λ2μ
+    boundarydata.coefficients[:] = boundarydata.coefficients ./ λ2μ
 
     return boundarydata
 end
@@ -207,7 +317,7 @@ function nondimensionalise!(boundarydata::BoundaryData{BoundaryCondition{Displac
 
     kp = sim.ω / sim.bearing.medium.cp;
     boundarydata.fields[:] = boundarydata.fields .* kp
-    boundarydata.fourier_modes[:] = boundarydata.fourier_modes .* kp
+    boundarydata.coefficients[:] = boundarydata.coefficients .* kp
 
     return boundarydata
 end
@@ -225,15 +335,16 @@ function nondimensionalise(bearing::RollerBearing, sim::BearingSimulation)
     return bearing
 end
 
+
 function nondimensionalise!(sim::BearingSimulation)
 
     # nondimensionalise boundary data
     nondimensionalise!(sim.boundarydata1, sim)
     nondimensionalise!(sim.boundarydata2, sim)
     
-    # nondimensionalise boundary basis
-    sim.boundarybasis1.basis[:] = [nondimensionalise!(bd, sim) for bd in sim.boundarybasis1.basis]
-    sim.boundarybasis2.basis[:] = [nondimensionalise!(bd, sim) for bd in sim.boundarybasis2.basis]
+    # just normalise each of elements of the basis as their size does not matter
+    normalize!(sim.boundarybasis1)
+    normalize!(sim.boundarybasis2)
 
     # nondimensionalise bearing
     sim.bearing = nondimensionalise(sim.bearing,sim)
@@ -242,10 +353,9 @@ function nondimensionalise!(sim::BearingSimulation)
 end
 
 
-function BearingSimulation(ω::T, bearing::RollerBearing{T}, boundarydata1::BD1, boundarydata2::BD2;
-    method::M = NoBearingMethod(),
-    kws...
-) where {T, M <: SolutionMethod, BD1 <: BoundaryData, BD2 <: BoundaryData}
+function BearingSimulation(ω::Real, bearing::RollerBearing{T}, boundarydata1::BD1, boundarydata2::BD2;
+        method::M = NoBearingMethod(), kws...
+    ) where {T, M <: SolutionMethod, BD1 <: BoundaryData, BD2 <: BoundaryData}
 
     if typeof(method) == NoBearingMethod
         @warn "no method was chosen for this bearing simulation. Will choose the default ModalMethod which makes no assumption about the forcing or bearings"
@@ -258,45 +368,48 @@ end
 
 function setup(sim::BearingSimulation{ModalMethod})
     
-    basis_order = sim.method.basis_order
+    modes = sim.method.modes
     boundarydata1 = sim.boundarydata1
     boundarydata2 = sim.boundarydata2
 
-    if basis_order == -1
-        if isempty(boundarydata1.fourier_modes)
-            if isempty(boundarydata2.fourier_modes)
-                println("As the keyword basis_order was not specified (and the fourier_modes of the boundary conditions were not provided), the basis_order will be chosen to match the number of points θs given in the boundary data.")
+    get_order(coefficients) = isempty(coefficients) ? - 1 : basislength_to_basisorder(PhysicalMedium{2,1}, size(coefficients,1))
 
-                # lower the basis_order if there are not enough data points to estimate it
-                m1 = Int(floor(length(boundarydata1.θs)/2.0 - 1/2.0))
-                m2 = Int(floor(length(boundarydata2.θs)/2.0 - 1/2.0))
+    # if the modes not given, then determine the modes from the data
+    if isempty(modes)
 
-                basis_order = min(m1, m2)
+        bd_to_modes(bd) = isempty(bd.modes) ? (-get_order(bd.fields):get_order(bd.fields)) : bd.modes
 
-            else basis_order = basislength_to_basisorder(PhysicalMedium{2,1},size(boundarydata2.fourier_modes,1))
-            end
+        modes_vec = bd_to_modes.([boundarydata1, boundarydata2])
 
-        else basis_order = basislength_to_basisorder(PhysicalMedium{2,1},size(boundarydata1.fourier_modes,1))
+        modes = intersect(modes_vec...) |> collect
+
+        if isempty(modes)
+            error("boundarydata1 and boundarydata2 share no modes in common. Fourier modes are required for the ModalMethod")
         end
 
-        @reset sim.method.basis_order = basis_order
+        is = sortperm_modes(modes);
+        modes = modes[is];
+
+        @reset sim.method.modes = modes
     end
 
    # we need the fourier modes of the boundary data
-    if isempty(boundarydata1.fourier_modes)
-        println("The Fourier modes for boundarydata1 are empty, they will be calculated from the fields provided")
-
-        boundarydata1 = fields_to_fouriermodes(boundarydata1, basis_order)
+    if isempty(boundarydata1.coefficients) 
+        # || (get_order(boundarydata1.fields) > get_order(boundarydata1.coefficients) && get_order(boundarydata1.coefficients) < basis_order )
+        # println("The Fourier modes for boundarydata1 are empty, or the fields have more data. The Fourier modes will be calculated from the fields provided.")
+        println("The Fourier coefficients for boundarydata1 are empty. The Fourier coefficients will be calculated from the fields provided.")
+        boundarydata1 = fields_to_fouriermodes(boundarydata1, modes)
+        
+    elseif modes != boundarydata1.modes 
+        boundarydata1 = select_modes(boundarydata1, modes)
     end
 
-    if isempty(boundarydata2.fourier_modes)
-        println("The Fourier modes for boundarydata2 are empty, they will be calculated from the fields provided")
-
-        boundarydata2 = fields_to_fouriermodes(boundarydata2, basis_order)
-    end
-
-    if size(boundarydata1.fourier_modes,1) != size(boundarydata2.fourier_modes,1)
-        error("number of fourier_modes in boundarydata1 and boundarydata2 needs to be the same")
+    if isempty(boundarydata2.coefficients) 
+        println("The Fourier coefficients for boundarydata2 are empty. The Fourier coefficients will be calculated from the fields provided.")
+        boundarydata2 = fields_to_fouriermodes(boundarydata2, modes)
+    
+    elseif modes != boundarydata2.modes 
+        boundarydata2 = select_modes(boundarydata2, modes)
     end
 
     @reset sim.boundarydata1 = boundarydata1
@@ -307,7 +420,7 @@ end
 
 function setup(sim::BearingSimulation{PriorMethod})
 
-    basis_order = sim.method.modal_method.basis_order;
+    modes = sim.method.modal_method.modes;
 
     if isempty(sim.boundarybasis1) && isempty(sim.boundarybasis2)
         error("The PriorMethod requires a boundary basis either for the first boundary (keyword 'boundary_basis1') or the second boundary (keyword 'boundary_basis2') ")
@@ -316,11 +429,11 @@ function setup(sim::BearingSimulation{PriorMethod})
     # we need the fields of the boundary data for the PriorMethod
     if isempty(sim.boundarydata1.fields) && isempty(sim.boundarydata2.fields)
 
-        error("The fields of boundarydata1 or boundarydata2 are empty. We expect that the fields are given for the PriorMethod because as the number of fourier_modes can be far greater than the length of the fields. Meaning it is not possible to calculate the fourier_modes of the boundary data directly")
+        error("The fields of boundarydata1 or boundarydata2 are empty. We expect that the fields are given for the PriorMethod because as the number of coefficients can be far greater than the length of the fields. Meaning it is not possible to calculate the coefficients of the boundary data directly")
     end
 
-    if basis_order == -1
-        println("No basis_order was specified. Will use the largest order according to the data provided (boundarybasis1, boundarybasis2, and poentially the boundarydata1 or boundarydata2)")
+    if modes |> isempty
+        println("No modes were specified. Will use the as many modes as possible according to the data provided (boundarybasis1, boundarybasis2, boundarydata1, and boundarydata2)")
 
         # need the Fourier modes for two boundaries. This can be provided either by one BoundaryBasis and one BoundaryData (most common), or by two BoundaryBasis. We determine the scenario first:
 
@@ -336,67 +449,54 @@ function setup(sim::BearingSimulation{PriorMethod})
             sim.boundarybasis2.basis[1]
         end
 
-        # if both boundarybasis1 and boundarybasis2 are given need to use the same number of modes
-        mode_lengths = [size(bd.fourier_modes,1) for bd in [data1, data2]]
+        get_order(coefficients) = isempty(coefficients) ? - 1 : basislength_to_basisorder(PhysicalMedium{2,1}, size(coefficients,1))
+        bd_to_modes(bd) = isempty(bd.modes) ? (-get_order(bd.fields):get_order(bd.fields)) : bd.modes
 
-        inds = findall(mode_lengths .> 0)
-        mode_lengths = unique(mode_lengths[inds])
+        modes_vec = bd_to_modes.([data1, data2])
+        modes = intersect(modes_vec...) |> collect
 
-        if length(mode_lengths) == 2
-            warn("The number of Fourier modes for the data need to be the same but were different.")
-            mode_lengths = minimum(mode_lengths)
-        end
-        
-        if isempty(mode_lengths)
-            field_lengths = [size(bd.fields,1) for bd in [data1, data2]]
-            inds = findall(field_lengths .> 0)
-            field_lengths = field_lengths[inds]
+        if isempty(modes) error("The modes was not specified and the data does not any modes in common") end
 
-            # need to use the smallest field length to calculate the fourier_modes of both boundarybasis'
-            field_length = minimum(field_lengths)
-            basis_order = Int(floor((field_length - 1)/2 ))
+        # use the standard ordering
+        modes = modes[sortperm_modes(modes)]
 
-        else basis_order = basislength_to_basisorder(PhysicalMedium{2,1},mode_lengths[1])
-        end
-
-        @reset sim.method.modal_method.basis_order = basis_order
+        @reset sim.method.modal_method.modes = modes
     end
 
-
-    # We need the fourier_modes for the boundarybasis
+    # We need the coefficients for the boundarybasis
     basis_vec = map(sim.boundarybasis1.basis) do b
-        if isempty(b.fourier_modes)
-            isempty(b.fields) ? b : fields_to_fouriermodes(b,basis_order)
+        if isempty(b.coefficients)
+            isempty(b.fields) ? b : fields_to_fouriermodes(b,modes)
         else
-            b
+            select_modes(b, modes)
         end
     end
     @reset sim.boundarybasis1 = BoundaryBasis(basis_vec)
 
     basis_vec = map(sim.boundarybasis2.basis) do b
-        if isempty(b.fourier_modes)
-            isempty(b.fields) ? b : fields_to_fouriermodes(b,basis_order)
+        if isempty(b.coefficients)
+            isempty(b.fields) ? b : fields_to_fouriermodes(b,modes)
         else
-            b
+            select_modes(b, modes)
         end
     end
     @reset sim.boundarybasis2 = BoundaryBasis(basis_vec)
 
-    # We need the fourier_modes for boundarydata if a basis is not provided
+    # We need the coefficients for boundarydata if a basis is not provided
     if isempty(sim.boundarybasis1)
 
-        if isempty(sim.boundarydata1.fourier_modes)
+        if isempty(sim.boundarydata1.coefficients)
             println("The Fourier modes for boundarydata1 are empty, they will be calculated from the fields provided")
 
-            @reset sim.boundarydata1 = fields_to_fouriermodes(sim.boundarydata1, basis_order)
-        end    
+            @reset sim.boundarydata1 = fields_to_fouriermodes(sim.boundarydata1, modes)
+        end
     end
 
     if isempty(sim.boundarybasis2)
-        if isempty(sim.boundarydata2.fourier_modes)
+        if isempty(sim.boundarydata2.coefficients)
             println("The Fourier modes for boundarydata2 are empty, they will be calculated from the fields provided")
 
-            @reset sim.boundarydata2 = fields_to_fouriermodes(sim.boundarydata2, basis_order)
+            @reset sim.boundarydata2 = fields_to_fouriermodes(sim.boundarydata2, modes)
         end
     end    
 
