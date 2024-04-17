@@ -5,6 +5,52 @@
 
 Creates an incident plane wave for the displacement in the form ``A e^{i k z} (0,1,0)``. The coefficients of the Debye potentials which correspond to this plane wave are given in "Resonance theory of elastic waves ultrasonically scattered from an elastic sphere - 1987".
 """
+function pressure_point_source(medium::Elastic{2,T}, source_position::AbstractVector, amplitude::Union{T,Complex{T},Function} = one(T))::RegularSource{Elastic{2,T}} where T <: AbstractFloat
+
+    # Convert to SVector for efficiency and consistency
+    source_position = SVector{2,T}(source_position)
+
+    if typeof(amplitude) <: Number
+        amp(ω) = amplitude
+    else
+        amp = amplitude
+    end
+    source_field(x,ω) = (amp(ω)*im)/4 * hankelh1(0,ω/medium.cp * norm(x-source_position))
+
+    function source_coef(order,centre,ω)
+        k = ω/medium.cp
+        r, θ = cartesian_to_radial_coordinates(centre - source_position)
+
+        # using Graf's addition theorem
+        return (amp(ω)*im)/4 * [hankelh1(-n,k*r) * exp(-im*n*θ) for n = -order:order]
+    end
+
+    return RegularSource{Elastic{2,T},WithoutSymmetry{2}}(medium, source_field, source_coef)
+end
+
+function shear_point_source(medium::Elastic{2,T}, source_position::AbstractVector, amplitude::Union{T,Complex{T},Function} = one(T))::RegularSource{Elastic{2,T}} where T <: AbstractFloat
+
+    # Convert to SVector for efficiency and consistency
+    source_position = SVector{2,T}(source_position)
+
+    if typeof(amplitude) <: Number
+        amp(ω) = amplitude
+    else
+        amp = amplitude
+    end
+    source_field(x,ω) = (amp(ω)*im)/4 * hankelh1(0,ω/medium.cs * norm(x-source_position))
+
+    function source_coef(order,centre,ω)
+        k = ω/medium.cs
+        r, θ = cartesian_to_radial_coordinates(centre - source_position)
+
+        # using Graf's addition theorem
+        return (amp(ω)*im)/4 * [hankelh1(-n,k*r) * exp(-im*n*θ) for n = -order:order]
+    end
+
+    return RegularSource{Elastic{2,T},WithoutSymmetry{2}}(medium, source_field, source_coef)
+end
+
 function plane_z_shear_source(medium::Elastic{3,T}, pos::AbstractArray{T} = zeros(T,3),
             amplitude::Union{T,Complex{T}} = one(T)
         ) where {T}
