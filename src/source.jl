@@ -1,10 +1,20 @@
 # Create elastic wave sources
-
+import MultipleScattering: point_source, AbstractSource
 """
     plane_z_source(medium::Elastic{3,T}, pos::AbstractArray{T}, amplitude::Union{T,Complex{T}}
 
 Creates an incident plane wave for the displacement in the form ``A e^{i k z} (0,1,0)``. The coefficients of the Debye potentials which correspond to this plane wave are given in "Resonance theory of elastic waves ultrasonically scattered from an elastic sphere - 1987".
 """
+struct BearingSource{Dim,T}
+    source_position::Vector{Float64}
+    amplitudes::Vector{Float64}
+    potentials::Vector{H} where H <: HelmholtzPotential{Dim,T}
+end
+
+function BearingSource(source_position::Vector{Float64}, amplitudes::Vector{Float64}, potentials::Vector{H}) where {Dim,T,H <:HelmholtzPotential{Dim,T}}
+    BearingSource{Dim,T}(source_position, amplitudes, potentials)
+end
+
 function pressure_point_source(medium::Elastic{2,T}, source_position::AbstractVector, amplitude::Union{T,Complex{T},Function} = one(T))::RegularSource{Elastic{2,T}} where T <: AbstractFloat
 
     # Convert to SVector for efficiency and consistency
