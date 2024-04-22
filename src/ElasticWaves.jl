@@ -54,9 +54,9 @@ using RecipesBase
 
 include("types.jl")
 include("elasticity.jl")
-include("source.jl")
-
 include("bearing.jl")
+
+include("source.jl")
 include("loading-profile.jl")
 include("fields.jl")
 include("signal_processing.jl")
