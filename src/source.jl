@@ -6,13 +6,40 @@ import MultipleScattering: point_source, AbstractSource
 Creates an incident plane wave for the displacement in the form ``A e^{i k z} (0,1,0)``. The coefficients of the Debye potentials which correspond to this plane wave are given in "Resonance theory of elastic waves ultrasonically scattered from an elastic sphere - 1987".
 """
 struct BearingSource{Dim,T}
-    source_position::Vector{Float64}
-    amplitudes::Vector{Float64}
+    source_position::Vector{T}
+    amplitudes::Vector{T}
     potentials::Vector{H} where H <: HelmholtzPotential{Dim,T}
+    
+    function BearingSource(source_position::Vector{T}, amplitudes::Vector{T}, potentials::Vector{H}) where {Dim,T,H<:HelmholtzPotential{Dim,T}}
+        new{Dim,T}(source_position, amplitudes, potentials)
+    end
+
 end
 
-function BearingSource(source_position::Vector{Float64}, amplitudes::Vector{Float64}, potentials::Vector{H}) where {Dim,T,H <:HelmholtzPotential{Dim,T}}
-    BearingSource{Dim,T}(source_position, amplitudes, potentials)
+function bearing_point_source(bearing::RollerBearing{T}, source_position::Vector{T}, amplitudes::Vector{T}, modes::AbstractVector{Int}, ω::T) where T <:AbstractFloat
+    
+    medium = bearing.medium
+    kp = ω/medium.cp
+    ks = ω/medium.cs
+    r, θ = cartesian_to_radial_coordinates(source_position)
+    
+    a0_array_inner = [((-1)^n)*[(amplitudes[1]*im/4)*hankelh1(-n, kp*r)*exp(-im*n*θ), 0.0+0.0im, (amplitudes[2]*im/4)*hankelh1(-n, ks*r)*exp(-im*n*θ), 0.0+0.0im] for n in modes]
+
+    a0_array_inner = hcat(a0_array_inner...) |>collect
+
+    a0_array_outer = [((-1)^n)*[0.0+0.0im, (amplitudes[1]*im/4)*besselj(-n,kp*r)*exp(-im*n*θ), 0.0+0.0im, (amplitudes[2]*im/4)*besselj(-n,ks*r)*exp(-im*n*θ)] for n in modes]
+
+    a0_array_outer = hcat(a0_array_outer...) |>collect
+
+    ϕinner = HelmholtzPotential{2}(bearing.medium.cp, kp, a0_array_inner[1:2,:], modes)
+    ψinner = HelmholtzPotential{2}(bearing.medium.cs, ks, a0_array_inner[3:4,:], modes)
+    ϕouter = HelmholtzPotential{2}(bearing.medium.cp, kp, a0_array_outer[1:2,:], modes)
+    ψouter = HelmholtzPotential{2}(bearing.medium.cs, ks, a0_array_outer[3:4,:], modes)
+
+
+    potentials = [ϕinner, ψinner, ϕouter, ψouter]
+
+    return BearingSource(source_position, amplitudes, potentials)
 end
 
 function pressure_point_source(medium::Elastic{2,T}, source_position::AbstractVector, amplitude::Union{T,Complex{T},Function} = one(T))::RegularSource{Elastic{2,T}} where T <: AbstractFloat
