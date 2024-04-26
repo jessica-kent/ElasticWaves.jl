@@ -16,29 +16,35 @@ struct BearingSource{Dim,T}
 
 end
 
-function bearing_point_source(bearing::RollerBearing{T}, source_position::Vector{T}, amplitudes::Vector{T}, modes::AbstractVector{Int}, ω::T) where T <:AbstractFloat
+function point_source(bearing::RollerBearing{T}, source_position::Vector{T}, amplitudes::Vector{T}, modes::AbstractVector{Int}, ω::T) where T
     
     medium = bearing.medium
     kp = ω/medium.cp
     ks = ω/medium.cs
-    r, θ = cartesian_to_radial_coordinates(source_position)
+    medium_p = Acoustic(medium.ρ, medium.cp, 2)
+    medium_s = Acoustic(medium.ρ, medium.cs, 2)
+    order = modes[length(modes)]
     
-    a0_array_inner = [((-1)^n)*[(amplitudes[1]*im/4)*hankelh1(-n, kp*r)*exp(-im*n*θ), 0.0+0.0im, (amplitudes[2]*im/4)*hankelh1(-n, ks*r)*exp(-im*n*θ), 0.0+0.0im] for n in modes]
+    coes_inner = (im/4)*hcat([amplitudes[1]*outgoing_translation_matrix(medium_p, 0, order, ω, -source_position), zeros(ComplexF64, length(modes)), amplitudes[2]*outgoing_translation_matrix(medium_s, 0, order, ω, -source_position), zeros(ComplexF64, length(modes))]...) |>collect |>transpose
 
-    a0_array_inner = hcat(a0_array_inner...) |>collect
+    coes_outer = (im/4)*hcat([zeros(ComplexF64, length(modes)), amplitudes[1]*regular_translation_matrix(medium_p, 0, order, ω, -source_position), zeros(ComplexF64, length(modes)), amplitudes[2]*regular_translation_matrix(medium_s, 0, order, ω, -source_position)]...) |>collect |>transpose
+    
+    M0s_inner = [vcat(boundarycondition_mode(ω,TractionBoundary(inner=true), bearing, n), zeros(ComplexF64, 2,4)) for n in modes]
+    
+    M0s_outer = [vcat(zeros(ComplexF64, 2,4), boundarycondition_mode(ω,TractionBoundary(outer=true), bearing, n)) for n in modes]
 
-    a0_array_outer = [((-1)^n)*[0.0+0.0im, (amplitudes[1]*im/4)*besselj(-n,kp*r)*exp(-im*n*θ), 0.0+0.0im, (amplitudes[2]*im/4)*besselj(-n,ks*r)*exp(-im*n*θ)] for n in modes]
+    Ms = [boundarycondition_system(ω, bearing, TractionBoundary(inner=true), TractionBoundary(outer=true), n) for n in modes]
 
-    a0_array_outer = hcat(a0_array_outer...) |>collect
+    τ_r1 = [-M0s_inner[i]*coes_inner[:,i] for i in 1:length(modes)]
+    τ_r2 = [-M0s_outer[i]*coes_outer[:,i] for i in 1:length(modes)]
 
-    ϕinner = HelmholtzPotential{2}(bearing.medium.cp, kp, a0_array_inner[1:2,:], modes)
-    ψinner = HelmholtzPotential{2}(bearing.medium.cs, ks, a0_array_inner[3:4,:], modes)
-    ϕouter = HelmholtzPotential{2}(bearing.medium.cp, kp, a0_array_outer[1:2,:], modes)
-    ψouter = HelmholtzPotential{2}(bearing.medium.cs, ks, a0_array_outer[3:4,:], modes)
+    reflected_coes = [Ms[i] \ (τ_r1[i]+τ_r2[i]) for i in 1:length(modes)]
+    reflected_coes = hcat(reflected_coes...) |>collect
 
+    ϕ = HelmholtzPotential{2}(medium.cp, kp, reflected_coes[1:2,:], modes)
+    ψ = HelmholtzPotential{2}(medium.cs, ks, reflected_coes[3:4,:], modes)
 
-    potentials = [ϕinner, ψinner, ϕouter, ψouter]
-
+    potentials = [ϕ,ψ]
     return BearingSource(source_position, amplitudes, potentials)
 end
 
